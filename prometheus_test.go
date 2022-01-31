@@ -40,10 +40,13 @@ func Test_InstrumentGorillaMux(t *testing.T) {
 	r.ServeHTTP(recorder, req1)
 	r.ServeHTTP(recorder, req2)
 	body := recorder.Body.String()
-	if !strings.Contains(body, requestName) {
-		t.Errorf("body does not contain request total entry '%s'", requestName)
+	if !strings.Contains(body, startedName) {
+		t.Errorf("body does not contain request total entry '%s'", startedName)
 	}
 	if !strings.Contains(body, latencyName) {
-		t.Errorf("body does not contain request duration entry '%s'", requestName)
+		t.Errorf("body does not contain request duration entry '%s'", latencyName)
+	}
+	if !strings.Contains(body, completedName) {
+		t.Errorf("body does not contain request total entry '%s'", completedName)
 	}
 }

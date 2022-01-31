@@ -16,8 +16,9 @@ var (
 )
 
 const (
-	requestName = "http_requests_total"
-	latencyName = "http_request_duration_seconds"
+	latencyName   = "http_request_duration_ms"
+	startedName   = "http_request_started_total"
+	completedName = "http_request_completed_total"
 )
 
 // Opts specifies options how to create new PrometheusMiddleware.
@@ -28,25 +29,14 @@ type Opts struct {
 
 // PrometheusMiddleware specifies the metrics that is going to be generated
 type PrometheusMiddleware struct {
-	request *prometheus.CounterVec
-	latency *prometheus.HistogramVec
+	latency   *prometheus.HistogramVec
+	started   *prometheus.CounterVec
+	completed *prometheus.CounterVec
 }
 
 // NewPrometheusMiddleware creates a new PrometheusMiddleware instance
 func NewPrometheusMiddleware(opts Opts) *PrometheusMiddleware {
 	var prometheusMiddleware PrometheusMiddleware
-
-	prometheusMiddleware.request = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: requestName,
-			Help: "How many HTTP requests processed, partitioned by status code, method and HTTP path.",
-		},
-		[]string{"code", "method", "path"},
-	)
-
-	if err := prometheus.Register(prometheusMiddleware.request); err != nil {
-		log.Println("prometheusMiddleware.request was not registered:", err)
-	}
 
 	buckets := opts.Buckets
 	if len(buckets) == 0 {
@@ -65,6 +55,28 @@ func NewPrometheusMiddleware(opts Opts) *PrometheusMiddleware {
 		log.Println("prometheusMiddleware.latency was not registered:", err)
 	}
 
+	prometheusMiddleware.started = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: startedName,
+		Help: "Total number of requests started on the http server.",
+	},
+		[]string{"method", "path"},
+	)
+
+	if err := prometheus.Register(prometheusMiddleware.started); err != nil {
+		log.Println("prometheusMiddleware.started was not registered:", err)
+	}
+
+	prometheusMiddleware.completed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: completedName,
+		Help: "Total number of requests completed on the http server.",
+	},
+		[]string{"code", "method", "path"},
+	)
+
+	if err := prometheus.Register(prometheusMiddleware.completed); err != nil {
+		log.Println("prometheusMiddleware.completed was not registered:", err)
+	}
+
 	return &prometheusMiddleware
 }
 
@@ -73,6 +85,11 @@ func NewPrometheusMiddleware(opts Opts) *PrometheusMiddleware {
 // This method is going to be used with gorilla/mux.
 func (p *PrometheusMiddleware) InstrumentHandlerDuration(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		route := mux.CurrentRoute(r)
+		path, _ := route.GetPathTemplate()
+		method := sanitizeMethod(r.Method)
+		p.started.WithLabelValues(method, path).Inc()
+
 		begin := time.Now()
 
 		delegate := &responseWriterDelegator{ResponseWriter: w}
@@ -80,13 +97,9 @@ func (p *PrometheusMiddleware) InstrumentHandlerDuration(next http.Handler) http
 
 		next.ServeHTTP(rw, r) // call original
 
-		route := mux.CurrentRoute(r)
-		path, _ := route.GetPathTemplate()
-
 		code := sanitizeCode(delegate.status)
-		method := sanitizeMethod(r.Method)
 
-		go p.request.WithLabelValues(
+		go p.completed.WithLabelValues(
 			code,
 			method,
 			path,
@@ -96,7 +109,7 @@ func (p *PrometheusMiddleware) InstrumentHandlerDuration(next http.Handler) http
 			code,
 			method,
 			path,
-		).Observe(float64(time.Since(begin)) / float64(time.Second))
+		).Observe(float64(time.Since(begin).Milliseconds()))
 	})
 }
 
